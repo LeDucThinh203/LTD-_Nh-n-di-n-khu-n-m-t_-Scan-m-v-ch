@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:le_duc_thinh/scanner_page.dart' show BarcodeScannerPage;
 import 'scan_save_page.dart';
 import 'recognize_page.dart';
 import 'view_saved_faces_page.dart';
+
 
 void main() {
   runApp(const MyApp());
@@ -25,7 +27,7 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("               Nhận diện khuôn mặt")),
+      appBar: AppBar(title: const Text("Nhận diện khuôn mặt & Quét mã")),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -46,6 +48,12 @@ class HomePage extends StatelessWidget {
               onPressed: () => Navigator.push(
                   context, MaterialPageRoute(builder: (_) => const ViewSavedFacesPage())),
               child: const Text("🖼 Xem ảnh đã lưu"),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () => Navigator.push(
+                  context, MaterialPageRoute(builder: (_) => const BarcodeScannerPage())),
+              child: const Text("📷 Quét mã vạch / QR"),
             ),
           ],
         ),

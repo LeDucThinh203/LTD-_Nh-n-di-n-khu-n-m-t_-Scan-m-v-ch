@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:camera/camera.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
 class BarcodeScannerPage extends StatefulWidget {
   const BarcodeScannerPage({Key? key}) : super(key: key);
@@ -9,69 +12,103 @@ class BarcodeScannerPage extends StatefulWidget {
 }
 
 class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
-  String? barcode;
-  final MobileScannerController cameraController = MobileScannerController(
-    facing: CameraFacing.back,
-    torchEnabled: false,
-  );
+  CameraController? _cameraController;
+  late final BarcodeScanner _barcodeScanner;
+  bool _isBusy = false;
+  String? _barcodeResult;
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+    _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.all]);
+  }
 
   @override
   void dispose() {
-    cameraController.dispose();
+    _cameraController?.dispose();
+    _barcodeScanner.close();
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    final List<Barcode> barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-
-    final String raw = barcodes.first.rawValue ?? '';
-    cameraController.stop(); // dừng tạm để tránh quét liên tục
-    setState(() {
-      barcode = raw;
-    });
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Mã quét được'),
-        content: Text(raw.isEmpty ? 'Không đọc được' : raw),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              cameraController.start(); // tiếp tục quét
-            },
-            child: const Text('Đóng và tiếp tục'),
-          ),
-        ],
-      ),
+  Future<void> _initCamera() async {
+    final cameras = await availableCameras();
+    final camera = cameras.firstWhere(
+          (c) => c.lensDirection == CameraLensDirection.back,
     );
+
+    _cameraController = CameraController(
+      camera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+
+    await _cameraController!.initialize();
+    await _cameraController!.startImageStream(_processCameraImage);
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _processCameraImage(CameraImage image) async {
+    if (_isBusy) return;
+    _isBusy = true;
+
+    try {
+      final WriteBuffer allBytes = WriteBuffer();
+      for (final Plane plane in image.planes) {
+        allBytes.putUint8List(plane.bytes);
+      }
+      final bytes = allBytes.done().buffer.asUint8List();
+
+      final Size imageSize = Size(
+        image.width.toDouble(),
+        image.height.toDouble(),
+      );
+
+      final camera = _cameraController!.description;
+      final rotation = InputImageRotationValue.fromRawValue(
+          camera.sensorOrientation) ??
+          InputImageRotation.rotation0deg;
+
+      final format = InputImageFormatValue.fromRawValue(image.format.raw) ??
+          InputImageFormat.nv21;
+
+      final inputImage = InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: imageSize,
+          rotation: rotation,
+          format: format,
+          bytesPerRow: image.planes.first.bytesPerRow,
+        ),
+      );
+
+      final barcodes = await _barcodeScanner.processImage(inputImage);
+
+      if (barcodes.isNotEmpty) {
+        setState(() {
+          _barcodeResult = barcodes.first.rawValue ?? 'Không đọc được';
+        });
+      }
+    } catch (e) {
+      debugPrint("Lỗi xử lý ảnh: $e");
+    }
+
+    _isBusy = false;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Quét mã vạch'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () => cameraController.toggleTorch(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.cameraswitch),
-            onPressed: () => cameraController.switchCamera(),
-          ),
-        ],
-      ),
-      body: Stack(
+      appBar: AppBar(title: const Text("Quét mã vạch (ML Kit)")),
+      body: _cameraController == null || !_cameraController!.value.isInitialized
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
         children: [
-          MobileScanner(
-            controller: cameraController,
-            onDetect: _onDetect,
-          ),
-          if (barcode != null)
+          CameraPreview(_cameraController!),
+          if (_barcodeResult != null)
             Positioned(
               bottom: 40,
               left: 20,
@@ -80,7 +117,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
                 padding: const EdgeInsets.all(12),
                 color: Colors.black54,
                 child: Text(
-                  'Kết quả: $barcode',
+                  'Kết quả: $_barcodeResult',
                   style: const TextStyle(color: Colors.white),
                   textAlign: TextAlign.center,
                 ),

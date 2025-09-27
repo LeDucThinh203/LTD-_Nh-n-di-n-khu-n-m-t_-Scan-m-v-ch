@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:le_duc_thinh/scanner_page.dart' show BarcodeScannerPage;
+import 'package:le_duc_thinh/scanner_page.dart';
 import 'scan_save_page.dart';
 import 'recognize_page.dart';
 import 'view_saved_faces_page.dart';

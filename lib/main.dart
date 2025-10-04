@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:le_duc_thinh/scanner_page.dart';
+import 'package:quan_ly_sinh_vien/scanner_page.dart';
+import 'package:quan_ly_sinh_vien/barcode_scanner_page.dart' hide BarcodeScannerPage;
 import 'scan_save_page.dart';
 import 'recognize_page.dart';
 import 'view_saved_faces_page.dart';
@@ -34,7 +35,7 @@ class HomePage extends StatelessWidget {
           children: [
             ElevatedButton(
               onPressed: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const ScanSavePage())),
+                  context, MaterialPageRoute(builder: (_) => const BarcodeScannerPage())),
               child: const Text("📸 Scan & Lưu 10 ảnh"),
             ),
             const SizedBox(height: 20),

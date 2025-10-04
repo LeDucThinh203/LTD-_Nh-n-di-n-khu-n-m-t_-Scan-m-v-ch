@@ -1,4 +1,4 @@
-name: le_duc_thinh
+name: quan_ly_sinh_vien  
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -38,6 +38,9 @@ dependencies:
   path_provider: ^2.0.15
   mobile_scanner: ^7.1.2
   google_mlkit_barcode_scanning: ^0.12.0
+  url_launcher: ^6.1.7
+  
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

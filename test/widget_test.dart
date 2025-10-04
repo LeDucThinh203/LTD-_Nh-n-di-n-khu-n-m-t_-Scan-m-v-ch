@@ -13,7 +13,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:le_duc_thinh/main.dart' show MyApp;
+import 'package:quan_ly_sinh_vien/main.dart' show MyApp;
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {

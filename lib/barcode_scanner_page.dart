@@ -1,9 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class BarcodeScannerPage extends StatefulWidget {
   const BarcodeScannerPage({Key? key}) : super(key: key);
@@ -12,8 +11,7 @@ class BarcodeScannerPage extends StatefulWidget {
   State<BarcodeScannerPage> createState() => _BarcodeScannerPageState();
 }
 
-class _BarcodeScannerPageState extends State<BarcodeScannerPage>
-    with WidgetsBindingObserver {
+class _BarcodeScannerPageState extends State<BarcodeScannerPage> with WidgetsBindingObserver {
   CameraController? _cameraController;
   late final BarcodeScanner _barcodeScanner;
   bool _isBusy = false;
@@ -21,33 +19,18 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
   BarcodeFormat? _barcodeFormat;
   bool _streamStopped = false;
   bool _isFlashOn = false;
-
-  List<CameraDescription>? _availableCameras;
-  CameraLensDirection _currentLensDirection = CameraLensDirection.back;
+  CameraDescription? _currentCamera;
+  DateTime? _lastProcessTime;
+  static const Duration _processingInterval = Duration(milliseconds: 100);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initCamera();
-
     _barcodeScanner = BarcodeScanner(
-      formats: [
-        BarcodeFormat.qrCode,
-        BarcodeFormat.ean13,
-        BarcodeFormat.ean8,
-        BarcodeFormat.code128,
-        BarcodeFormat.code39,
-        BarcodeFormat.upca,
-        BarcodeFormat.upce,
-        BarcodeFormat.code93,
-        BarcodeFormat.codabar,
-        BarcodeFormat.itf,
-        BarcodeFormat.aztec,
-        BarcodeFormat.dataMatrix,
-        BarcodeFormat.pdf417,
-      ],
+      formats: BarcodeFormat.values,
     );
+    _initCamera();
   }
 
   @override
@@ -61,28 +44,26 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return;
-    }
+    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
 
     if (state == AppLifecycleState.inactive) {
       _cameraController?.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
+      _initCamera(_currentCamera?.lensDirection ?? CameraLensDirection.back);
     }
   }
 
-  Future<void> _initCamera() async {
+  Future<void> _initCamera([CameraLensDirection direction = CameraLensDirection.back]) async {
     try {
-      _availableCameras = await availableCameras();
-      if (_availableCameras!.isEmpty) {
-        throw Exception('Không tìm thấy camera');
-      }
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) throw Exception('Không tìm thấy camera');
 
-      final camera = _availableCameras!.firstWhere(
-        (c) => c.lensDirection == _currentLensDirection,
-        orElse: () => _availableCameras!.first,
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == direction,
+        orElse: () => cameras.first,
       );
+
+      _currentCamera = camera;
 
       _cameraController = CameraController(
         camera,
@@ -92,24 +73,17 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
       );
 
       await _cameraController!.initialize();
-
-      if (!_cameraController!.value.isInitialized) {
-        throw Exception('Camera không khởi tạo được');
-      }
-
       await _cameraController!.setFocusMode(FocusMode.auto);
       await _cameraController!.setExposureMode(ExposureMode.auto);
-
       await _cameraController!.startImageStream(_processCameraImage);
+
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Lỗi khởi tạo camera: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Lỗi camera: $e\nVui lòng cấp quyền camera trong Settings',
-            ),
+            content: Text('Lỗi camera: $e\nVui lòng cấp quyền camera trong Settings'),
             duration: const Duration(seconds: 5),
           ),
         );
@@ -117,50 +91,28 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
     }
   }
 
-  // Throttle để giảm tần suất xử lý
-  DateTime? _lastProcessTime;
-  static const Duration _processingInterval = Duration(milliseconds: 100);
-
   Future<void> _processCameraImage(CameraImage image) async {
     if (_isBusy || _streamStopped) return;
 
     final now = DateTime.now();
-    if (_lastProcessTime != null &&
-        now.difference(_lastProcessTime!) < _processingInterval) {
-      return;
-    }
+    if (_lastProcessTime != null && now.difference(_lastProcessTime!) < _processingInterval) return;
     _lastProcessTime = now;
 
     _isBusy = true;
-
     try {
       final inputImage = _convertCameraImage(image);
-
       if (inputImage != null) {
         final barcodes = await _barcodeScanner.processImage(inputImage);
-
-        if (barcodes.isNotEmpty) {
-          debugPrint('Found ${barcodes.length} barcodes');
-          for (var barcode in barcodes) {
-            debugPrint('Barcode format: ${barcode.format}');
-            debugPrint('Barcode value: ${barcode.rawValue}');
-            debugPrint('Barcode bounds: ${barcode.boundingBox}');
-          }
-        }
-
         if (barcodes.isNotEmpty && mounted) {
           final barcode = barcodes.first;
           final value = barcode.rawValue ?? '';
-
           if (value.isNotEmpty && value != _barcodeResult) {
             _barcodeResult = value;
             _barcodeFormat = barcode.format;
-
             SystemSound.play(SystemSoundType.click);
             await _cameraController?.stopImageStream();
             _streamStopped = true;
-
-            if (mounted) setState(() {});
+            setState(() {});
           }
         }
       }
@@ -173,12 +125,11 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
 
   InputImage? _convertCameraImage(CameraImage image) {
     try {
-      final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in image.planes) {
+      final allBytes = WriteBuffer();
+      for (final plane in image.planes) {
         allBytes.putUint8List(plane.bytes);
       }
       final bytes = allBytes.done().buffer.asUint8List();
-
       final imageSize = Size(image.width.toDouble(), image.height.toDouble());
       final rotation = _getImageRotation();
 
@@ -199,18 +150,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
 
   InputImageRotation _getImageRotation() {
     if (_cameraController == null) return InputImageRotation.rotation0deg;
-
-    final sensorOrientation = _cameraController!.description.sensorOrientation;
-
-    int rotationCompensation = sensorOrientation;
-
-    if (sensorOrientation == 90) {
-      rotationCompensation = 90;
-    } else if (sensorOrientation == 270) {
-      rotationCompensation = 270;
-    }
-
-    switch (rotationCompensation) {
+    switch (_cameraController!.description.sensorOrientation) {
       case 0:
         return InputImageRotation.rotation0deg;
       case 90:
@@ -220,18 +160,15 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
       case 270:
         return InputImageRotation.rotation270deg;
       default:
-        return InputImageRotation.rotation90deg;
+        return InputImageRotation.rotation0deg;
     }
   }
 
   Future<void> _toggleFlash() async {
     if (_cameraController == null) return;
-
     try {
       _isFlashOn = !_isFlashOn;
-      await _cameraController!.setFlashMode(
-        _isFlashOn ? FlashMode.torch : FlashMode.off,
-      );
+      await _cameraController!.setFlashMode(_isFlashOn ? FlashMode.torch : FlashMode.off);
       setState(() {});
     } catch (e) {
       debugPrint('Lỗi toggle flash: $e');
@@ -240,24 +177,37 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
 
   Future<void> _restartScanning() async {
     if (_cameraController == null) return;
-
-    try {
-      _barcodeResult = null;
-      _barcodeFormat = null;
-      _streamStopped = false;
-      _isBusy = false;
-
-      if (!_cameraController!.value.isStreamingImages) {
-        await _cameraController!.startImageStream(_processCameraImage);
-      }
-
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Lỗi restart scanning: $e');
+    _barcodeResult = null;
+    _barcodeFormat = null;
+    _streamStopped = false;
+    _isBusy = false;
+    if (!_cameraController!.value.isStreamingImages) {
+      await _cameraController!.startImageStream(_processCameraImage);
     }
+    setState(() {});
   }
 
-  String _getBarcodeFormatName(BarcodeFormat? format) {
+  Future<void> _switchCamera() async {
+    if (_currentCamera == null) return;
+    final newDirection = _currentCamera!.lensDirection == CameraLensDirection.back
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+
+    await _cameraController?.stopImageStream();
+    await _cameraController?.dispose();
+
+    _streamStopped = false;
+    _barcodeResult = null;
+    _barcodeFormat = null;
+    _isBusy = false;
+    _isFlashOn = false;
+
+    await _initCamera(newDirection);
+  }
+
+  bool _isLink(String text) => RegExp(r'^(http|https)://', caseSensitive: false).hasMatch(text);
+
+  String _formatBarcodeName(BarcodeFormat? format) {
     switch (format) {
       case BarcodeFormat.qrCode:
         return 'QR Code';
@@ -269,89 +219,57 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
         return 'Code 128';
       case BarcodeFormat.code39:
         return 'Code 39';
+      case BarcodeFormat.upca:
+        return 'UPC-A';
+      case BarcodeFormat.upce:
+        return 'UPC-E';
       default:
         return 'Barcode';
     }
   }
 
-  Future<void> _pickImageAndScan() async {
-    try {
-      final picker = ImagePicker();
-      final XFile? pickedFile =
-          await picker.pickImage(source: ImageSource.gallery);
-
-      if (pickedFile == null) return;
-
-      final inputImage = InputImage.fromFilePath(pickedFile.path);
-
-      final barcodes = await _barcodeScanner.processImage(inputImage);
-
-      if (barcodes.isNotEmpty) {
-        final barcode = barcodes.first;
-        final value = barcode.rawValue ?? '';
-        if (value.isNotEmpty && value != _barcodeResult) {
-          _barcodeResult = value;
-          _barcodeFormat = barcode.format;
-
-          SystemSound.play(SystemSoundType.click);
-          await _cameraController?.stopImageStream();
-          _streamStopped = true;
-
-          if (mounted) setState(() {});
+  Future<void> _launchUrl(String url) async {
+    final Uri uri = Uri.parse(url);
+    // Cố gắng mở bằng Chrome trên Android nếu có, fallback vào default
+    final chromePackage = 'com.android.chrome';
+    if (await canLaunchUrl(uri)) {
+      if (Theme.of(context).platform == TargetPlatform.android) {
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication, webViewConfiguration: const WebViewConfiguration(), webOnlyWindowName: '_blank');
+          // Không có cách bắt buộc mở bằng Chrome từ url_launcher chuẩn, 
+          // nhưng mode externalApplication sẽ dùng app tương ứng (Chrome nếu cài)
+        } catch (_) {
+          await launchUrl(uri);
         }
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không tìm thấy mã vạch trong ảnh')),
-          );
-        }
+        await launchUrl(uri);
       }
-    } catch (e) {
-      debugPrint('Lỗi chọn ảnh hoặc xử lý ảnh: $e');
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể mở liên kết')));
+      }
     }
-  }
-
-  Future<void> _switchCamera() async {
-    if (_availableCameras == null || _availableCameras!.isEmpty) return;
-
-    _currentLensDirection = _currentLensDirection == CameraLensDirection.back
-        ? CameraLensDirection.front
-        : CameraLensDirection.back;
-
-    await _cameraController?.stopImageStream();
-    await _cameraController?.dispose();
-    _cameraController = null;
-
-    if (mounted) setState(() {});
-    await _initCamera();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ready =
-        _cameraController != null && _cameraController!.value.isInitialized;
+    final ready = _cameraController?.value.isInitialized ?? false;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Quét mã vạch'),
         backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
         actions: [
           if (ready)
             IconButton(
               onPressed: _toggleFlash,
               icon: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off),
             ),
-          IconButton(
-            onPressed: _pickImageAndScan,
-            icon: const Icon(Icons.image),
-            tooltip: 'Chọn ảnh từ máy',
-          ),
-          IconButton(
-            onPressed: _switchCamera,
-            icon: const Icon(Icons.cameraswitch),
-            tooltip: 'Chuyển camera',
-          ),
+          if (ready)
+            IconButton(
+              onPressed: _switchCamera,
+              icon: const Icon(Icons.cameraswitch),
+            ),
         ],
       ),
       body: !ready
@@ -368,22 +286,19 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
           : Stack(
               children: [
                 SizedBox.expand(child: CameraPreview(_cameraController!)),
-
                 Center(
                   child: Container(
                     width: 280,
                     height: 280,
                     decoration: BoxDecoration(
                       border: Border.all(
-                        color:
-                            _barcodeResult != null ? Colors.green : Colors.red,
+                        color: _barcodeResult != null ? Colors.green : Colors.red,
                         width: 3,
                       ),
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-
                 if (_barcodeResult == null)
                   Positioned(
                     top: 100,
@@ -396,13 +311,12 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Text(
-                        'Đưa mã vạch vào khung đỏ để quét\nHoặc chọn ảnh từ máy',
+                        'Đưa mã vạch vào khung đỏ để quét\nGiữ camera ổn định',
                         style: TextStyle(color: Colors.white, fontSize: 16),
                         textAlign: TextAlign.center,
                       ),
                     ),
                   ),
-
                 if (_barcodeResult != null)
                   Positioned(
                     bottom: 40,
@@ -421,15 +335,12 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                children: [
-                                  const Icon(
-                                    Icons.check_circle,
-                                    color: Colors.green,
-                                  ),
-                                  const SizedBox(width: 8),
+                                children: const [
+                                  Icon(Icons.check_circle, color: Colors.green),
+                                  SizedBox(width: 8),
                                   Text(
                                     'Quét thành công!',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: Colors.green,
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
@@ -439,23 +350,50 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage>
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                'Loại: ${_getBarcodeFormatName(_barcodeFormat)}',
+                                'Loại: ${_barcodeFormat != null ? _formatBarcodeName(_barcodeFormat) : 'Unknown'}',
                                 style: const TextStyle(color: Colors.white70),
                               ),
-                              Text(
-                                'Giá trị: $_barcodeResult',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                ),
+                              const SizedBox(height: 4),
+                              SelectableText(
+                                _barcodeResult!,
+                                style: const TextStyle(color: Colors.white, fontSize: 16),
                               ),
+                              if (_isLink(_barcodeResult!))
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton.icon(
+                                    onPressed: () => _launchUrl(_barcodeResult!),
+                                    icon: const Icon(Icons.open_in_browser),
+                                    label: const Text('Mở liên kết'),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
                         const SizedBox(height: 12),
-                        ElevatedButton(
-                          onPressed: _restartScanning,
-                          child: const Text('Quét lại'),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Clipboard.setData(ClipboardData(text: _barcodeResult!));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Đã copy!')),
+                                  );
+                                },
+                                icon: const Icon(Icons.copy),
+                                label: const Text('Copy'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _restartScanning,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Quét lại'),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

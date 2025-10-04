@@ -6,9 +6,9 @@
     <uses-feature android:name="android.hardware.camera.autofocus" />
 
     <application
-        android:label="le_duc_thinh"
+        android:label="Điểm danh Hutech"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/hutech">
 
         <activity
             android:name=".MainActivity"

@@ -1,45 +1,145 @@
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
-
 class FacePainter extends CustomPainter {
   final List<Face> faces;
-  final Size previewSize;
-  FacePainter(this.faces, this.previewSize);
+  final Size previewSize; // size raw từ camera (landscape orientation)
+  final bool isFront;
+  final InputImageRotation rotation;
+  final bool showDebug;
+
+  FacePainter(
+    this.faces,
+    this.previewSize, {
+    this.isFront = false,
+    this.rotation = InputImageRotation.rotation0deg,
+    this.showDebug = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double scaleX = size.width / previewSize.height;
-    final double scaleY = size.height / previewSize.width;
-    final paint = Paint()
+    // Tùy rotation của camera, width/height có thể hoán đổi.
+    late double scaleX;
+    late double scaleY;
+    final bool swapped =
+        rotation == InputImageRotation.rotation90deg ||
+        rotation == InputImageRotation.rotation270deg;
+    if (swapped) {
+      scaleX = size.width / previewSize.height;
+      scaleY = size.height / previewSize.width;
+    } else {
+      scaleX = size.width / previewSize.width;
+      scaleY = size.height / previewSize.height;
+    }
+
+    final rectPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..color = Colors.red;
+      ..strokeWidth = 2.5
+      ..color = Colors.greenAccent;
 
-    final textPainter = TextPainter(textAlign: TextAlign.left, textDirection: TextDirection.ltr);
+    final bgLabelPaint = Paint()..color = Colors.black.withOpacity(.45);
 
-    for (Face face in faces) {
-      final rect = Rect.fromLTRB(
-          face.boundingBox.left * scaleX,
-          face.boundingBox.top * scaleY,
-          face.boundingBox.right * scaleX,
-          face.boundingBox.bottom * scaleY);
-      canvas.drawRect(rect, paint);
+    final textPainter = TextPainter(
+      textAlign: TextAlign.left,
+      textDirection: TextDirection.ltr,
+    );
 
-      String label = "";
-      if (face.smilingProbability != null) {
-        int percent = (face.smilingProbability! * 100).toInt();
-        label = percent > 50 ? "😊 Vui $percent%" : "😐 Buồn ${100 - percent}%";
+    for (final face in faces) {
+      // Mirror cho camera trước
+      double left = face.boundingBox.left;
+      double right = face.boundingBox.right;
+      if (isFront) {
+        if (swapped) {
+          // swapped => width của preview là height thực tế
+          left = previewSize.height - face.boundingBox.right;
+          right = previewSize.height - face.boundingBox.left;
+        } else {
+          left = previewSize.width - face.boundingBox.right;
+          right = previewSize.width - face.boundingBox.left;
+        }
       }
 
-      textPainter.text = TextSpan(
+      final top = face.boundingBox.top;
+      final bottom = face.boundingBox.bottom;
+
+      final rect = Rect.fromLTRB(
+        left * scaleX,
+        top * scaleY,
+        right * scaleX,
+        bottom * scaleY,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(12)),
+        rectPaint,
+      );
+
+      // Smile label
+      String label = '';
+      final smile = face.smilingProbability;
+      if (smile != null) {
+        final percent = (smile * 100).round();
+        if (percent >= 65) {
+          label = '😄 Cười $percent%';
+        } else if (percent >= 35) {
+          label = '� Bình thường $percent%';
+        } else if (percent >= 10) {
+          label = '😐 Trầm $percent%';
+        } else {
+          label = '😶 Neutral';
+        }
+      } else if (showDebug) {
+        label = 'No smile prob';
+      }
+
+      if (label.isNotEmpty) {
+        textPainter.text = TextSpan(
           text: label,
-          style: const TextStyle(color: Colors.blue, fontSize: 16, fontWeight: FontWeight.bold));
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(rect.left, rect.top > 20 ? rect.top - 20 : rect.top));
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        );
+        textPainter.layout();
+        final tp = Offset(
+          rect.left,
+          rect.top - (textPainter.height + 6) < 0
+              ? rect.top + 4
+              : rect.top - (textPainter.height + 6),
+        );
+        final bgRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            tp.dx - 6,
+            tp.dy - 3,
+            textPainter.width + 12,
+            textPainter.height + 6,
+          ),
+          const Radius.circular(8),
+        );
+        canvas.drawRRect(bgRect, bgLabelPaint);
+        textPainter.paint(canvas, tp);
+      }
+
+      if (showDebug) {
+        final dbg = 'sm=${smile?.toStringAsFixed(2)}';
+        textPainter.text = TextSpan(
+          text: dbg,
+          style: const TextStyle(color: Colors.yellowAccent, fontSize: 11),
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          rect.bottomRight -
+              Offset(textPainter.width + 4, textPainter.height + 4),
+        );
+      }
     }
   }
 
   @override
-  bool shouldRepaint(covariant FacePainter oldDelegate) => oldDelegate.faces != faces;
+  bool shouldRepaint(covariant FacePainter old) =>
+      old.faces != faces ||
+      old.isFront != isFront ||
+      old.rotation != rotation ||
+      old.showDebug != showDebug;
 }
